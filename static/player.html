@@ -1,0 +1,1206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Vocab Shooter - 学生端</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/js/socket.io.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body {
+            height: 100%;
+            overflow: hidden;
+            touch-action: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-touch-callout: none;
+        }
+        body {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        .glass {
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+        }
+        #game-canvas {
+            display: block;
+            background: rgba(0, 0, 0, 0.25);
+            border-radius: 16px;
+        }
+        /* 分数弹出动画 */
+        .score-pop {
+            position: fixed;
+            font-weight: bold;
+            font-size: 36px;
+            pointer-events: none;
+            animation: popUp 0.8s ease-out forwards;
+            text-shadow: 0 2px 15px rgba(0,0,0,0.6);
+            z-index: 1000;
+        }
+        @keyframes popUp {
+            0% { transform: translateY(0) scale(1); opacity: 1; }
+            100% { transform: translateY(-80px) scale(1.8); opacity: 0; }
+        }
+        /* 屏幕抖动 */
+        .shake {
+            animation: shake 0.4s ease-out;
+        }
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20% { transform: translateX(-8px); }
+            40% { transform: translateX(8px); }
+            60% { transform: translateX(-6px); }
+            80% { transform: translateX(6px); }
+        }
+        /* 爆炸粒子 */
+        .explosion-particle {
+            position: fixed;
+            pointer-events: none;
+            border-radius: 50%;
+            z-index: 999;
+        }
+        /* 加载动画 */
+        .loading-pulse {
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 0.4; transform: scale(1); }
+            50% { opacity: 1; transform: scale(1.1); }
+        }
+        @keyframes spaceFlash {
+            0% { transform: translate(-50%, -50%) scale(0.5); opacity: 1; }
+            100% { transform: translate(-50%, -50%) scale(1.5); opacity: 0; }
+        }
+        /* iPad安全区域 */
+        .safe-area-bottom {
+            padding-bottom: env(safe-area-inset-bottom, 20px);
+        }
+        .safe-area-top {
+            padding-top: env(safe-area-inset-top, 20px);
+        }
+        /* 加入界面过渡 */
+        #join-screen {
+            transition: opacity 0.5s ease-out, transform 0.5s ease-out;
+        }
+        #join-screen.hidden {
+            opacity: 0;
+            transform: scale(1.1);
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <!-- 音效开关 -->
+    <button id="sound-toggle" class="fixed top-4 right-4 z-50 w-12 h-12 rounded-full glass flex items-center justify-center text-2xl hover:scale-110 transition">
+        🔊
+    </button>
+
+    <!-- 连接状态 -->
+    <div id="connection-status" class="fixed top-4 left-4 z-50 p-3 rounded-xl glass safe-area-top">
+        <span id="status-indicator" class="inline-block w-3 h-3 rounded-full loading-pulse"></span>
+        <span id="status-text" class="text-sm">连接中...</span>
+    </div>
+
+    <!-- 加入界面（直接从URL进入则自动跳过） -->
+    <div id="join-screen" class="fixed inset-0 flex items-center justify-center p-6">
+        <div class="glass rounded-3xl p-8 w-full max-w-md">
+            <div class="text-center mb-8">
+                <div class="text-7xl mb-4 loading-pulse">🎯</div>
+                <h1 class="text-4xl font-bold mb-2">Vocab Shooter</h1>
+                <p class="text-gray-400">词汇射击游戏</p>
+            </div>
+            
+            <div class="space-y-4">
+                <div>
+                    <input type="text" id="room-code-input" 
+                        class="w-full bg-white/10 rounded-2xl p-5 text-center text-3xl tracking-widest focus:outline-none focus:ring-4 focus:ring-blue-500/50 placeholder:text-gray-500"
+                        placeholder="房间码" maxlength="4" autocomplete="off" inputmode="numeric">
+                </div>
+                
+                <button id="join-btn" class="w-full bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 py-5 rounded-2xl font-bold text-xl hover:opacity-90 active:scale-95 transition shadow-lg shadow-purple-500/30">
+                    开始游戏
+                </button>
+                
+                <p id="error-message" class="text-red-400 text-center text-sm hidden"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 游戏界面 -->
+    <div id="game-screen" class="fixed inset-0 hidden">
+        <!-- 顶部信息栏 -->
+        <div class="fixed top-4 left-4 right-4 glass rounded-2xl p-4 flex justify-between items-center z-50 safe-area-top" style="padding-left: max(1rem, env(safe-area-inset-left)); padding-right: max(1rem, env(safe-area-inset-right));">
+            <div class="flex items-center gap-3">
+                <span class="text-2xl">👤</span>
+                <span id="player-name-display" class="font-bold text-lg">学生</span>
+            </div>
+            <div class="flex items-center gap-6">
+                <div class="text-center">
+                    <p class="text-xs text-gray-400">分数</p>
+                    <p id="score-display" class="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-cyan-400">0</p>
+                </div>
+                <div class="w-px h-10 bg-white/20"></div>
+                <div class="text-center">
+                    <p class="text-xs text-gray-400">时间</p>
+                    <p id="timer-display" class="text-3xl font-black">3:00</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 游戏画布 -->
+        <div class="fixed inset-2 top-24 bottom-8 rounded-3xl overflow-hidden" style="bottom: max(2rem, env(safe-area-inset-bottom));">
+            <canvas id="game-canvas"></canvas>
+        </div>
+
+        <!-- 操作提示 -->
+        <div id="touch-guide" class="fixed bottom-12 left-1/2 -translate-x-1/2 text-gray-400 text-xs z-40 transition opacity-0 text-center">
+            💻 PC: ← → 移动 | 空格键射击 📱 iPad: 滑动移动 | 中间点击射击
+        </div>
+
+        <!-- 等待开始遮罩 -->
+        <div id="waiting-overlay" class="fixed inset-0 flex items-center justify-center bg-black/70 z-40">
+            <div class="text-center">
+                <div class="text-8xl mb-6 loading-pulse">🎯</div>
+                <p class="text-2xl text-gray-300">等待教师开始游戏...</p>
+                <p class="text-sm text-gray-500 mt-2">请保持网络连接</p>
+            </div>
+        </div>
+
+        <!-- 结束画面 -->
+        <div id="end-overlay" class="fixed inset-0 hidden items-center justify-center bg-black/85 z-50 backdrop-blur-sm">
+            <div class="text-center glass rounded-3xl p-10 max-w-sm mx-4">
+                <div class="text-7xl mb-4">🏆</div>
+                <h2 class="text-3xl font-bold mb-2">游戏结束！</h2>
+                <div id="final-score" class="text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-orange-500 my-4">0</div>
+                <div class="text-gray-400 space-y-1 mb-6">
+                    <p>命中: <span id="final-hits" class="text-green-400 font-bold">0</span></p>
+                    <p>失误: <span id="final-misses" class="text-red-400 font-bold">0</span></p>
+                    <p>准确率: <span id="final-accuracy" class="text-blue-400 font-bold">0%</span></p>
+                </div>
+                <div id="rating" class="text-4xl mb-4">⭐</div>
+                <p id="rating-text" class="text-gray-400 mb-6">继续加油！</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============ 音效系统 ============
+        const SoundManager = {
+            enabled: true,
+            audioCtx: null,
+            
+            init() {
+                // 尝试初始化音频上下文
+                try {
+                    this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                } catch (e) {
+                    console.log('Web Audio API not supported');
+                }
+                
+                // 从本地存储读取设置
+                this.enabled = localStorage.getItem('vocabSoundEnabled') !== 'false';
+                updateSoundButton();
+            },
+            
+            resume() {
+                if (this.audioCtx && this.audioCtx.state === 'suspended') {
+                    this.audioCtx.resume();
+                }
+            },
+            
+            playHit() {
+                if (!this.enabled || !this.audioCtx) return;
+                this.resume();
+                
+                const ctx = this.audioCtx;
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                
+                osc.frequency.setValueAtTime(880, ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(1760, ctx.currentTime + 0.1);
+                
+                gain.gain.setValueAtTime(0.3, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+                
+                osc.start(ctx.currentTime);
+                osc.stop(ctx.currentTime + 0.2);
+            },
+            
+            playMiss() {
+                if (!this.enabled || !this.audioCtx) return;
+                this.resume();
+                
+                const ctx = this.audioCtx;
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(200, ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(80, ctx.currentTime + 0.3);
+                
+                gain.gain.setValueAtTime(0.2, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+                
+                osc.start(ctx.currentTime);
+                osc.stop(ctx.currentTime + 0.3);
+            },
+            
+            playExplosion() {
+                if (!this.enabled || !this.audioCtx) return;
+                this.resume();
+                
+                const ctx = this.audioCtx;
+                
+                // 创建多个噪音
+                for (let i = 0; i < 3; i++) {
+                    const bufferSize = ctx.sampleRate * 0.15;
+                    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+                    const data = buffer.getChannelData(0);
+                    
+                    for (let j = 0; j < bufferSize; j++) {
+                        data[j] = (Math.random() * 2 - 1) * Math.pow(1 - j / bufferSize, 2);
+                    }
+                    
+                    const source = ctx.createBufferSource();
+                    source.buffer = buffer;
+                    
+                    const gain = ctx.createGain();
+                    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+                    
+                    source.connect(gain);
+                    gain.connect(ctx.destination);
+                    
+                    source.start(ctx.currentTime + i * 0.02);
+                }
+            },
+            
+            playCountdown() {
+                if (!this.enabled || !this.audioCtx) return;
+                this.resume();
+                
+                const ctx = this.audioCtx;
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                
+                osc.frequency.setValueAtTime(660, ctx.currentTime);
+                gain.gain.setValueAtTime(0.15, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+                
+                osc.start(ctx.currentTime);
+                osc.stop(ctx.currentTime + 0.15);
+            },
+            
+            toggle() {
+                this.enabled = !this.enabled;
+                localStorage.setItem('vocabSoundEnabled', this.enabled);
+                updateSoundButton();
+                if (!this.enabled) {
+                    this.stopBgMusic();
+                }
+            },
+            
+            // 背景音乐 - 简单的程序生成旋律
+            startBgMusic() {
+                if (!this.enabled || !this.audioCtx || this.bgMusicOsc) return;
+                this.resume();
+                
+                const ctx = this.audioCtx;
+                
+                // 创建主振荡器
+                this.bgMusicOsc = ctx.createOscillator();
+                this.bgMusicGain = ctx.createGain();
+                
+                this.bgMusicOsc.type = 'sine';
+                this.bgMusicGain.gain.setValueAtTime(0.08, ctx.currentTime);
+                
+                this.bgMusicOsc.connect(this.bgMusicGain);
+                this.bgMusicGain.connect(ctx.destination);
+                
+                // 简单的和弦循环
+                const melody = [261.63, 293.66, 329.63, 349.23, 392.00, 349.23, 329.63, 293.66];
+                let noteIndex = 0;
+                const noteDuration = 0.5;
+                
+                const playNextNote = () => {
+                    if (!this.bgMusicOsc || !this.enabled) return;
+                    
+                    const freq = melody[noteIndex % melody.length];
+                    this.bgMusicOsc.frequency.setValueAtTime(freq, ctx.currentTime);
+                    noteIndex++;
+                    
+                    setTimeout(playNextNote, noteDuration * 1000);
+                };
+                
+                this.bgMusicOsc.start();
+                playNextNote();
+            },
+            
+            stopBgMusic() {
+                if (this.bgMusicOsc) {
+                    try {
+                        this.bgMusicOsc.stop();
+                    } catch (e) {}
+                    this.bgMusicOsc = null;
+                    this.bgMusicGain = null;
+                }
+            }
+        };
+        
+        function updateSoundButton() {
+            const btn = document.getElementById('sound-toggle');
+            btn.textContent = SoundManager.enabled ? '🔊' : '🔇';
+        }
+        
+        document.getElementById('sound-toggle').addEventListener('click', () => SoundManager.toggle());
+
+        // ============ 粒子爆炸系统 ============
+        const ParticleSystem = {
+            particles: [],
+            
+            createExplosion(x, y, color, isTarget) {
+                const particleCount = isTarget ? 20 : 12;
+                const colors = isTarget 
+                    ? ['#4ade80', '#22c55e', '#86efac', '#fbbf24', '#ffffff']
+                    : ['#f87171', '#ef4444', '#fca5a5', '#fb923c'];
+                
+                for (let i = 0; i < particleCount; i++) {
+                    const angle = (Math.PI * 2 * i) / particleCount + Math.random() * 0.5;
+                    const speed = 3 + Math.random() * 5;
+                    const size = 4 + Math.random() * 8;
+                    
+                    this.particles.push({
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        size: size,
+                        color: colors[Math.floor(Math.random() * colors.length)],
+                        alpha: 1,
+                        decay: 0.02 + Math.random() * 0.02,
+                        gravity: 0.1
+                    });
+                }
+                
+                // 添加星星特效
+                if (isTarget) {
+                    for (let i = 0; i < 8; i++) {
+                        const angle = Math.random() * Math.PI * 2;
+                        const speed = 2 + Math.random() * 3;
+                        this.particles.push({
+                            x: x,
+                            y: y,
+                            vx: Math.cos(angle) * speed,
+                            vy: Math.sin(angle) * speed - 2,
+                            size: 2 + Math.random() * 3,
+                            color: '#fbbf24',
+                            alpha: 1,
+                            decay: 0.03,
+                            gravity: 0.05,
+                            isStar: true
+                        });
+                    }
+                }
+            },
+            
+            update() {
+                for (let i = this.particles.length - 1; i >= 0; i--) {
+                    const p = this.particles[i];
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += p.gravity;
+                    p.alpha -= p.decay;
+                    p.size *= 0.97;
+                    
+                    if (p.alpha <= 0 || p.size < 0.5) {
+                        this.particles.splice(i, 1);
+                    }
+                }
+            },
+            
+            draw(ctx) {
+                this.particles.forEach(p => {
+                    ctx.save();
+                    ctx.globalAlpha = p.alpha;
+                    ctx.fillStyle = p.color;
+                    
+                    if (p.isStar) {
+                        // 绘制星星
+                        ctx.translate(p.x, p.y);
+                        ctx.rotate(p.vx * 0.5);
+                        ctx.beginPath();
+                        for (let i = 0; i < 5; i++) {
+                            const angle = (i * 4 * Math.PI) / 5 - Math.PI / 2;
+                            const r = i % 2 === 0 ? p.size : p.size / 2;
+                            if (i === 0) ctx.moveTo(r * Math.cos(angle), r * Math.sin(angle));
+                            else ctx.lineTo(r * Math.cos(angle), r * Math.sin(angle));
+                        }
+                        ctx.closePath();
+                        ctx.fill();
+                    } else {
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    
+                    ctx.restore();
+                });
+            },
+            
+            clear() {
+                this.particles = [];
+            }
+        };
+
+        // ============ 全局状态 ============
+        let socket = null;
+        let roomId = null;
+        let playerId = null;
+        let playerName = '学生';
+        let isPlaying = false;
+        let score = 0;
+        let hits = 0;
+        let misses = 0;
+        let fallSpeed = 60;
+        let gameDuration = 180;
+        let gameStartTime = 0;
+        let animationFrameId = null;
+        let lastWordId = null;  // 防止重复处理
+
+        // 游戏对象
+        let words = [];  // { id, text, x, y, width, height, isTarget, spawnTime }
+        let lastSpawnTime = 0;
+        let spawnInterval = 2000;
+        let canvasWidth = 0;
+        let canvasHeight = 0;
+
+        // 触控状态
+        let touchStartX = null;
+        let cannonTargetX = null;
+        let cannonX = 0;
+        let cannonWidth = 70;
+
+        // ============ DOM 元素 ============
+        const joinScreen = document.getElementById('join-screen');
+        const gameScreen = document.getElementById('game-screen');
+        const roomCodeInput = document.getElementById('room-code-input');
+        const joinBtn = document.getElementById('join-btn');
+        const errorMessage = document.getElementById('error-message');
+        const playerNameDisplay = document.getElementById('player-name-display');
+        const scoreDisplay = document.getElementById('score-display');
+        const timerDisplay = document.getElementById('timer-display');
+        const canvas = document.getElementById('game-canvas');
+        const ctx = canvas.getContext('2d');
+        const waitingOverlay = document.getElementById('waiting-overlay');
+        const endOverlay = document.getElementById('end-overlay');
+        const touchGuide = document.getElementById('touch-guide');
+        const statusIndicator = document.getElementById('status-indicator');
+        const statusText = document.getElementById('status-text');
+
+        // ============ URL 参数检查 ============
+        const urlParams = new URLSearchParams(window.location.search);
+        const roomFromUrl = urlParams.get('room');
+        const nameFromUrl = urlParams.get('name');
+
+        // ============ 画布尺寸设置 ============
+        function resizeCanvas() {
+            const parent = canvas.parentElement;
+            const rect = parent.getBoundingClientRect();
+            
+            // iPad视网膜屏适配
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            canvas.style.width = rect.width + 'px';
+            canvas.style.height = rect.height + 'px';
+            
+            ctx.scale(dpr, dpr);
+            
+            canvasWidth = rect.width;
+            canvasHeight = rect.height;
+            
+            // 炮台初始位置
+            cannonX = canvasWidth / 2 - cannonWidth / 2;
+        }
+
+        // ============ 连接状态更新 ============
+        function updateConnectionStatus(connected) {
+            if (connected) {
+                statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-green-500';
+                statusText.textContent = '已连接';
+            } else {
+                statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-red-500 loading-pulse';
+                statusText.textContent = '未连接';
+            }
+        }
+
+        // ============ Socket.IO 初始化 ============
+        function initSocket() {
+            socket = io();
+
+            socket.on('connect', () => {
+                console.log('已连接');
+                updateConnectionStatus(true);
+                SoundManager.resume();
+                
+                // 如果URL有房间号，自动加入
+                if (roomFromUrl) {
+                    roomCodeInput.value = roomFromUrl;
+                    playerName = nameFromUrl || '学生';
+                    playerNameDisplay.textContent = playerName;
+                    joinRoom(roomFromUrl, playerName);
+                }
+            });
+
+            socket.on('disconnect', () => {
+                console.log('断开连接');
+                updateConnectionStatus(false);
+            });
+
+            socket.on('connect_error', (err) => {
+                console.error('连接错误:', err);
+                updateConnectionStatus(false);
+            });
+
+            // 游戏开始
+            socket.on('game_start', (data) => {
+                console.log('游戏开始:', data);
+                startGame(data);
+            });
+
+            // 词汇生成
+            socket.on('word_spawn', (word) => {
+                if (word.id !== lastWordId) {
+                    lastWordId = word.id;
+                    spawnWord(word);
+                }
+            });
+
+            // 分数更新
+            socket.on('score_update', (data) => {
+                if (data.player_id === playerId) {
+                    score = data.score;
+                    scoreDisplay.textContent = score;
+                    hits = data.hits || hits;
+                    misses = data.misses || misses;
+                }
+                showScorePop(data.change, data.is_target);
+                
+                // 播放音效
+                if (data.player_id === playerId) {
+                    if (data.change > 0) {
+                        SoundManager.playHit();
+                        // 在分数弹出位置创建爆炸
+                        const rect = canvas.getBoundingClientRect();
+                        ParticleSystem.createExplosion(
+                            rect.left + rect.width / 2,
+                            rect.top + rect.height / 3,
+                            '#4ade80',
+                            true
+                        );
+                    } else {
+                        SoundManager.playMiss();
+                        // 错误抖动
+                        document.body.classList.add('shake');
+                        setTimeout(() => document.body.classList.remove('shake'), 400);
+                    }
+                }
+            });
+
+            // 游戏暂停
+            socket.on('game_paused', () => {
+                isPlaying = false;
+            });
+
+            // 游戏继续
+            socket.on('game_resumed', () => {
+                isPlaying = true;
+            });
+
+            // 游戏结束
+            socket.on('game_end', (data) => {
+                console.log('收到游戏结束:', data);
+                endGame(data);
+            });
+
+            socket.on('game_ended', (data) => {
+                console.log('收到游戏已结束:', data);
+                endGame(data);
+            });
+        }
+
+        // ============ 加入房间 ============
+        joinBtn.addEventListener('click', () => {
+            const code = roomCodeInput.value.trim();
+            if (!code) {
+                showError('请输入房间码');
+                return;
+            }
+            playerName = '学生' + Math.floor(Math.random() * 1000);
+            joinRoom(code, playerName);
+        });
+
+        roomCodeInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') joinBtn.click();
+        });
+
+        function joinRoom(code, name) {
+            roomId = code;
+            playerName = name;
+            playerNameDisplay.textContent = playerName;
+            
+            joinBtn.disabled = true;
+            joinBtn.textContent = '加入中...';
+            hideError();
+
+            socket.emit('join_room', {
+                room_id: roomId,
+                player_name: playerName
+            }, (response) => {
+                if (response.success) {
+                    playerId = response.player_id;
+                    joinScreen.classList.add('hidden');
+                    gameScreen.classList.remove('hidden');
+                    resizeCanvas();
+                    
+                    // 显示触控引导（3秒后消失）
+                    if (isTouchDevice()) {
+                        touchGuide.style.opacity = '1';
+                        setTimeout(() => {
+                            touchGuide.style.opacity = '0';
+                        }, 4000);
+                    }
+                } else {
+                    showError(response.error || '加入失败');
+                    joinBtn.disabled = false;
+                    joinBtn.textContent = '开始游戏';
+                }
+            });
+        }
+
+        function showError(msg) {
+            errorMessage.textContent = msg;
+            errorMessage.classList.remove('hidden');
+        }
+
+        function hideError() {
+            errorMessage.classList.add('hidden');
+        }
+
+        function isTouchDevice() {
+            return 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        }
+
+        // ============ 游戏逻辑 ============
+        function startGame(data) {
+            isPlaying = true;
+            score = 0;
+            hits = 0;
+            misses = 0;
+            words = [];
+            bullets = []; // 清空子弹
+            fallSpeed = data.fall_speed || 60;
+            gameDuration = data.duration || 180;
+            gameStartTime = performance.now();
+            lastSpawnTime = 0;
+            cannonX = canvasWidth / 2 - cannonWidth / 2;
+            
+            // 动态调整生成间隔
+            spawnInterval = Math.max(1000, 2200 - fallSpeed * 12);
+            
+            scoreDisplay.textContent = '0';
+            waitingOverlay.classList.add('hidden');
+            endOverlay.classList.add('hidden');
+            endOverlay.classList.remove('flex');
+            
+            ParticleSystem.clear();
+            resizeCanvas();
+            
+            // 播放倒计时音效
+            SoundManager.playCountdown();
+            
+            // 开始背景音乐
+            SoundManager.startBgMusic();
+            
+            requestAnimationFrame(gameLoop);
+        }
+
+        function gameLoop(timestamp) {
+            if (!isPlaying) return;
+
+            // 更新时间
+            const elapsed = (timestamp - gameStartTime) / 1000;
+            const remaining = Math.max(0, gameDuration - elapsed);
+            const mins = Math.floor(remaining / 60);
+            const secs = Math.floor(remaining % 60);
+            timerDisplay.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+
+            if (remaining <= 0) {
+                endGame({});
+                return;
+            }
+
+            // 平滑移动炮台
+            if (cannonTargetX !== null) {
+                const diff = cannonTargetX - cannonX;
+                cannonX += diff * 0.15;
+            }
+
+            // 更新粒子
+            ParticleSystem.update();
+            
+            // 更新子弹
+            updateBullets();
+
+            // 更新词汇位置
+            words.forEach(word => {
+                word.y += fallSpeed / 60;
+            });
+
+            // 检测词汇落底
+            words = words.filter(word => {
+                if (word.y > canvasHeight + 20) {
+                    if (word.isTarget) {
+                        misses++;
+                    }
+                    return false;
+                }
+                return true;
+            });
+
+            // 绘制
+            draw();
+
+            if (isPlaying) {
+                animationFrameId = requestAnimationFrame(gameLoop);
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+            // 绘制所有词汇气泡
+            words.forEach(word => {
+                drawWord(word);
+            });
+
+            // 绘制粒子
+            ParticleSystem.draw(ctx);
+            
+            // 绘制子弹
+            drawBullets();
+
+            // 绘制炮台
+            drawCannon();
+        }
+
+        function drawWord(word) {
+            const fontSize = 22;
+            ctx.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
+            const textWidth = ctx.measureText(word.text).width;
+            
+            const padding = 20;
+            const width = textWidth + padding * 2;
+            const height = fontSize + padding * 2;
+            
+            // 气泡渐变
+            const gradient = ctx.createLinearGradient(word.x, word.y, word.x + width, word.y + height);
+            gradient.addColorStop(0, '#6366f1');
+            gradient.addColorStop(1, '#8b5cf6');
+            
+            ctx.save();
+            
+            // 发光效果
+            ctx.shadowColor = '#8b5cf6';
+            ctx.shadowBlur = 20;
+            
+            // 气泡背景
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.roundRect(word.x, word.y, width, height, height / 2);
+            ctx.fill();
+            
+            // 高光
+            ctx.shadowBlur = 0;
+            const highlightGradient = ctx.createLinearGradient(word.x, word.y, word.x, word.y + height * 0.4);
+            highlightGradient.addColorStop(0, 'rgba(255,255,255,0.3)');
+            highlightGradient.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = highlightGradient;
+            ctx.beginPath();
+            ctx.roundRect(word.x + 4, word.y + 4, width - 8, height * 0.4, [height / 2 - 4, height / 2 - 4, 0, 0]);
+            ctx.fill();
+            
+            // 文字
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(word.text, word.x + width / 2, word.y + height / 2);
+            
+            ctx.restore();
+        }
+
+        function drawCannon() {
+            const cannonY = canvasHeight - 60;
+            const centerX = cannonX + cannonWidth / 2;
+            
+            ctx.save();
+            
+            // 炮台底座阴影
+            ctx.shadowColor = 'rgba(0,0,0,0.5)';
+            ctx.shadowBlur = 15;
+            ctx.shadowOffsetY = 5;
+            
+            // 底座
+            const baseGradient = ctx.createLinearGradient(centerX - 30, cannonY, centerX + 30, cannonY);
+            baseGradient.addColorStop(0, '#4b5563');
+            baseGradient.addColorStop(0.5, '#6b7280');
+            baseGradient.addColorStop(1, '#4b5563');
+            ctx.fillStyle = baseGradient;
+            ctx.beginPath();
+            ctx.ellipse(centerX, cannonY + 10, 35, 15, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // 炮管
+            ctx.shadowBlur = 0;
+            ctx.shadowOffsetY = 0;
+            
+            const barrelGradient = ctx.createLinearGradient(centerX - 8, 0, centerX + 8, 0);
+            barrelGradient.addColorStop(0, '#374151');
+            barrelGradient.addColorStop(0.5, '#6b7280');
+            barrelGradient.addColorStop(1, '#374151');
+            ctx.fillStyle = barrelGradient;
+            ctx.fillRect(centerX - 8, cannonY - 25, 16, 35);
+            
+            // 炮口
+            ctx.fillStyle = '#1f2937';
+            ctx.beginPath();
+            ctx.arc(centerX, cannonY - 25, 10, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // 炮口高光
+            ctx.fillStyle = '#374151';
+            ctx.beginPath();
+            ctx.arc(centerX - 3, cannonY - 28, 3, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.restore();
+        }
+
+        function spawnWord(word) {
+            const fontSize = 22;
+            ctx.font = `bold ${fontSize}px sans-serif`;
+            const textWidth = ctx.measureText(word.text).width;
+            
+            const padding = 20;
+            const width = textWidth + padding * 2;
+            const height = fontSize + padding * 2;
+            
+            const maxX = canvasWidth - width;
+            const x = Math.random() * maxX;
+            
+            words.push({
+                id: word.id,
+                text: word.text,
+                x: x,
+                y: -height - 10,
+                width: width,
+                height: height,
+                isTarget: word.isTarget !== false,
+                spawnTime: performance.now()
+            });
+            
+            lastWordId = word.id;
+        }
+
+        function handleCanvasTap(clientX, clientY) {
+            if (!isPlaying) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const clickX = clientX - rect.left;
+            const clickY = clientY - rect.top;
+            
+            // 遍历所有词汇检测点击
+            for (let i = words.length - 1; i >= 0; i--) {
+                const word = words[i];
+                if (clickX >= word.x && clickX <= word.x + word.width &&
+                    clickY >= word.y && clickY <= word.y + word.height) {
+                    
+                    // 击中！
+                    const wordCenterX = rect.left + word.x + word.width / 2;
+                    const wordCenterY = rect.top + word.y + word.height / 2;
+                    
+                    // 创建爆炸效果
+                    ParticleSystem.createExplosion(wordCenterX, wordCenterY, null, word.isTarget);
+                    SoundManager.playExplosion();
+                    
+                    // 发送击打结果
+                    socket.emit('hit_word', {
+                        word_id: word.id,
+                        word_text: word.text
+                    });
+                    
+                    // 移除词汇
+                    words.splice(i, 1);
+                    break;
+                }
+            }
+        }
+
+        function showScorePop(change, isTarget) {
+            const pop = document.createElement('div');
+            pop.className = 'score-pop';
+            pop.style.left = '50%';
+            pop.style.top = '35%';
+            pop.style.transform = 'translateX(-50%)';
+            pop.style.color = change > 0 ? '#4ade80' : '#f87171';
+            pop.textContent = change > 0 ? `+${change}` : change;
+            
+            if (change > 0) {
+                pop.style.textShadow = '0 0 20px rgba(74, 222, 128, 0.8)';
+            }
+            
+            document.body.appendChild(pop);
+            setTimeout(() => pop.remove(), 800);
+        }
+
+        function endGame(data) {
+            isPlaying = false;
+            
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+            }
+            
+            // 停止背景音乐
+            SoundManager.stopBgMusic();
+            
+            // 清除所有词汇
+            words = [];
+            
+            // 显示结束画面
+            waitingOverlay.classList.add('hidden');
+            endOverlay.classList.remove('hidden');
+            endOverlay.classList.add('flex');
+            
+            // 使用本地记录或服务器数据
+            const finalScore = data.scores?.[playerId] ?? score;
+            const finalHits = data.hits?.[playerId] ?? hits;
+            const finalMisses = data.misses?.[playerId] ?? misses;
+            const total = finalHits + finalMisses;
+            const accuracy = total > 0 ? Math.round(finalHits / total * 100) : 0;
+            
+            document.getElementById('final-score').textContent = finalScore;
+            document.getElementById('final-hits').textContent = finalHits;
+            document.getElementById('final-misses').textContent = finalMisses;
+            document.getElementById('final-accuracy').textContent = accuracy + '%';
+            
+            // 评级
+            const ratingEl = document.getElementById('rating');
+            const ratingTextEl = document.getElementById('rating-text');
+            
+            if (accuracy >= 90) {
+                ratingEl.textContent = '🌟🌟🌟';
+                ratingTextEl.textContent = '太厉害了！词汇达人！';
+            } else if (accuracy >= 70) {
+                ratingEl.textContent = '⭐⭐';
+                ratingTextEl.textContent = '很棒！继续加油！';
+            } else if (accuracy >= 50) {
+                ratingEl.textContent = '⭐';
+                ratingTextEl.textContent = '不错的开始！';
+            } else {
+                ratingEl.textContent = '💪';
+                ratingTextEl.textContent = '多练习一定能进步！';
+            }
+        }
+
+        // ============ 触控控制 ============
+        canvas.addEventListener('touchstart', (e) => {
+            SoundManager.resume(); // 确保音频上下文已启动
+            if (!isPlaying) return;
+            e.preventDefault();
+            
+            const touch = e.touches[0];
+            touchStartX = touch.clientX;
+            
+            // 检测点击位置
+            const rect = canvas.getBoundingClientRect();
+            const clickX = touch.clientX - rect.left;
+            const canvasWidth = rect.width;
+            
+            if (clickX < canvasWidth * 0.25) {
+                cannonTargetX = 0;
+            } else if (clickX > canvasWidth * 0.75) {
+                cannonTargetX = canvasWidth - cannonWidth;
+            } else {
+                // 中间区域：发射
+                handleCanvasTap(touch.clientX, touch.clientY);
+                cannonTargetX = null;
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('touchmove', (e) => {
+            if (!isPlaying || touchStartX === null) return;
+            e.preventDefault();
+            
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            const moveX = touch.clientX - rect.left;
+            
+            // 拖动控制炮台
+            cannonTargetX = Math.max(0, Math.min(canvasWidth - cannonWidth, moveX - cannonWidth / 2));
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', () => {
+            touchStartX = null;
+            // 炮台保持位置
+        });
+
+        // 鼠标点击支持（PC端）
+        canvas.addEventListener('click', (e) => {
+            SoundManager.resume(); // 确保音频上下文已启动
+            if (!isPlaying) return;
+            handleCanvasTap(e.clientX, e.clientY);
+        });
+
+        // 键盘控制
+        document.addEventListener('keydown', (e) => {
+            SoundManager.resume(); // 确保音频上下文已启动
+            if (!isPlaying) return;
+            
+            if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
+                cannonTargetX = Math.max(0, cannonX - 30);
+                e.preventDefault();
+            } else if (e.code === 'ArrowRight' || e.code === 'KeyD') {
+                cannonTargetX = Math.min(canvasWidth - cannonWidth, cannonX + 30);
+                e.preventDefault();
+            } else if (e.code === 'Space') {
+                // 空格键射击 - 发射所有词汇
+                fireAllWords();
+                e.preventDefault();
+            }
+        });
+        
+        // 子弹系统
+        let bullets = []; // { x, y, vy }
+        
+        function fireBullet() {
+            if (!isPlaying) return;
+            
+            // 创建子弹 - 从炮台中央发射
+            const bulletX = cannonX + cannonWidth / 2;
+            bullets.push({
+                x: bulletX,
+                y: canvasHeight - 80,
+                vy: -12 // 向上移动
+            });
+        }
+        
+        function updateBullets() {
+            const rect = canvas.getBoundingClientRect();
+            
+            for (let b = bullets.length - 1; b >= 0; b--) {
+                const bullet = bullets[b];
+                bullet.y += bullet.vy;
+                
+                // 检测与词汇的碰撞
+                let hitWord = null;
+                for (let i = words.length - 1; i >= 0; i--) {
+                    const word = words[i];
+                    // 简单的碰撞检测
+                    if (bullet.x >= word.x && bullet.x <= word.x + word.width &&
+                        bullet.y >= word.y && bullet.y <= word.y + word.height) {
+                        hitWord = word;
+                        words.splice(i, 1);
+                        break;
+                    }
+                }
+                
+                if (hitWord) {
+                    // 击中词汇！
+                    const wordCenterX = rect.left + hitWord.x + hitWord.width / 2;
+                    const wordCenterY = rect.top + hitWord.y + hitWord.height / 2;
+                    
+                    ParticleSystem.createExplosion(wordCenterX, wordCenterY, null, hitWord.isTarget);
+                    SoundManager.playExplosion();
+                    
+                    socket.emit('hit_word', {
+                        word_id: hitWord.id,
+                        word_text: hitWord.text
+                    });
+                    
+                    // 移除这颗子弹
+                    bullets.splice(b, 1);
+                    continue;
+                }
+                
+                // 子弹飞出屏幕
+                if (bullet.y < -20) {
+                    bullets.splice(b, 1);
+                }
+            }
+        }
+        
+        function drawBullets() {
+            bullets.forEach(bullet => {
+                ctx.save();
+                
+                // 子弹发光
+                ctx.shadowColor = '#fbbf24';
+                ctx.shadowBlur = 15;
+                
+                // 子弹主体
+                const gradient = ctx.createLinearGradient(bullet.x - 4, bullet.y - 10, bullet.x + 4, bullet.y + 10);
+                gradient.addColorStop(0, '#fef3c7');
+                gradient.addColorStop(0.5, '#fbbf24');
+                gradient.addColorStop(1, '#f59e0b');
+                
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.ellipse(bullet.x, bullet.y, 5, 12, 0, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // 子弹尾焰
+                ctx.fillStyle = 'rgba(249, 115, 22, 0.6)';
+                ctx.beginPath();
+                ctx.ellipse(bullet.x, bullet.y + 15, 3, 8, 0, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.restore();
+            });
+        }
+        
+        // 空格键射击
+        function fireAllWords() {
+            fireBullet();
+        }
+
+        // ============ 窗口大小变化 ============
+        window.addEventListener('resize', () => {
+            resizeCanvas();
+        });
+
+        // ============ 初始化 ============
+        SoundManager.init();
+        initSocket();
+        resizeCanvas();
+        
+        // 如果URL有房间号，自动加入
+        if (roomFromUrl) {
+            joinScreen.querySelector('.glass').classList.add('hidden');
+            document.querySelector('#join-screen .text-center').classList.add('hidden');
+        }
+    </script>
+</body>
+</html>
