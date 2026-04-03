@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vocab Shooter - 教师端</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/js/socket.io.min.js"></script>
+    <style>
+        body {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+        }
+        .glass {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+            transition: all 0.3s;
+        }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(59, 130, 246, 0.4); }
+        .btn-danger { background: linear-gradient(135deg, #ef4444, #f97316); }
+        .btn-success { background: linear-gradient(135deg, #22c55e, #10b981); }
+        .word-bubble {
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6) !important;
+            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4);
+        }
+        .input-section {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 12px;
+        }
+        .input-label {
+            font-size: 14px;
+            font-weight: bold;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .input-hint {
+            font-size: 11px;
+            color: #9ca3af;
+            margin-top: 6px;
+        }
+    </style>
+</head>
+<body class="text-white font-sans">
+    <div class="flex h-screen">
+        <!-- 左侧：控制面板 -->
+        <div class="w-96 glass p-6 flex flex-col overflow-y-auto">
+            <div class="flex items-center gap-3 mb-6">
+                <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
+                    <span class="text-2xl">🎯</span>
+                </div>
+                <div>
+                    <h1 class="font-bold text-lg">Vocab Shooter</h1>
+                    <p class="text-xs text-gray-400">教师控制台</p>
+                </div>
+            </div>
+
+            <!-- 音效开关 -->
+            <button id="sound-toggle" class="fixed top-4 right-4 z-50 w-10 h-10 rounded-full glass flex items-center justify-center text-xl hover:scale-110 transition">🔊</button>
+            
+            <!-- 连接状态 -->
+            <div id="connection-status" class="mb-4 p-2 rounded-lg text-center text-sm">
+                <span id="status-indicator" class="inline-block w-2 h-2 rounded-full mr-2"></span>
+                <span id="status-text">正在连接...</span>
+            </div>
+
+            <!-- 房间信息 -->
+            <div id="room-section" class="mb-6">
+                <h3 class="text-sm font-bold text-gray-400 mb-3">房间设置</h3>
+                
+                <!-- 未创建房间时显示 -->
+                <div id="room-form">
+                    <!-- 目标词汇输入 -->
+                    <div class="input-section">
+                        <div class="input-label">
+                            <span>✅</span>
+                            <span class="text-green-400">目标词汇</span>
+                        </div>
+                        <textarea id="target-input" rows="6" 
+                            class="w-full bg-white/10 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                            placeholder="输入目标词汇（学生需要点击的）
+每行一个，例如：
+apple
+banana
+beautiful"></textarea>
+                        <p class="input-hint">学生点击目标词汇 +1分</p>
+                    </div>
+                    
+                    <!-- 干扰词汇输入 -->
+                    <div class="input-section">
+                        <div class="input-label">
+                            <span>❌</span>
+                            <span class="text-red-400">干扰词汇</span>
+                        </div>
+                        <textarea id="distractor-input" rows="6" 
+                            class="w-full bg-white/10 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                            placeholder="输入干扰词汇（陷阱词汇）
+每行一个，例如：
+cat
+dog
+table"></textarea>
+                        <p class="input-hint">干扰词汇，点击 -1分（颜色与目标词汇一致）</p>
+                    </div>
+                    
+                    <!-- 游戏设置 -->
+                    <div class="mb-4 grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-2">下落速度</label>
+                            <select id="speed-select" class="w-full bg-white/10 rounded-lg p-2 text-sm">
+                                <option value="40">慢速</option>
+                                <option value="60" selected>中速</option>
+                                <option value="80">快速</option>
+                                <option value="100">极速</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-2">游戏时长</label>
+                            <select id="duration-select" class="w-full bg-white/10 rounded-lg p-2 text-sm">
+                                <option value="120">2分钟</option>
+                                <option value="180" selected>3分钟</option>
+                                <option value="300">5分钟</option>
+                                <option value="600">10分钟</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <!-- 统计信息 -->
+                    <div id="word-stats" class="mb-4 p-3 bg-white/5 rounded-lg text-sm">
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">目标词汇:</span>
+                            <span id="target-count" class="text-green-400 font-bold">0 个</span>
+                        </div>
+                        <div class="flex justify-between mt-1">
+                            <span class="text-gray-400">干扰词汇:</span>
+                            <span id="distractor-count" class="text-red-400 font-bold">0 个</span>
+                        </div>
+                    </div>
+                    
+                    <button id="create-btn" class="w-full btn-primary py-3 rounded-lg font-bold">
+                        🎮 创建房间
+                    </button>
+                </div>
+                
+                <!-- 创建房间后显示 -->
+                <div id="room-info" class="hidden">
+                    <div class="bg-white/10 rounded-lg p-4">
+                        <p class="text-xs text-gray-400 mb-1">房间码</p>
+                        <p id="room-code" class="text-3xl font-bold text-center tracking-widest text-blue-400"></p>
+                        <p class="text-xs text-gray-500 mt-2 text-center">分享给学生链接</p>
+                        <p id="room-link" class="text-xs text-center text-blue-300 mt-1 break-all"></p>
+                    </div>
+                    <button id="copy-link-btn" class="w-full mt-3 bg-blue-500/30 py-2 rounded-lg text-sm hover:bg-blue-500/50 transition">
+                        📋 复制链接
+                    </button>
+                </div>
+            </div>
+
+            <!-- 学生列表 -->
+            <div id="players-section" class="mb-6 flex-1">
+                <h3 class="text-sm font-bold text-gray-400 mb-3">在线学生</h3>
+                <div id="player-list" class="space-y-2">
+                    <p class="text-sm text-gray-500">等待学生加入...</p>
+                </div>
+            </div>
+
+            <!-- 控制按钮 -->
+            <div id="control-section" class="hidden space-y-3">
+                <button id="start-btn" class="w-full btn-success py-3 rounded-lg font-bold text-lg">
+                    🎮 开始游戏
+                </button>
+                <div class="grid grid-cols-2 gap-3">
+                    <button id="pause-btn" class="btn-primary py-2 rounded-lg font-bold hidden">
+                        ⏸️ 暂停
+                    </button>
+                    <button id="resume-btn" class="btn-primary py-2 rounded-lg font-bold hidden">
+                        ▶️ 继续
+                    </button>
+                </div>
+                <button id="end-btn" class="w-full btn-danger py-2 rounded-lg font-bold hidden">
+                    ⏹️ 结束游戏
+                </button>
+                <div class="mt-4">
+                    <label class="block text-sm text-gray-400 mb-2">追加目标词汇</label>
+                    <div class="flex gap-2">
+                        <input id="add-words-input" type="text" 
+                            class="flex-1 bg-white/10 rounded-lg p-2 text-sm"
+                            placeholder="输入词汇回车">
+                        <button id="add-words-btn" class="bg-green-500 px-3 rounded-lg hover:bg-green-600">+</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧：游戏预览 -->
+        <div class="flex-1 p-6">
+            <div class="h-full flex flex-col">
+                <h2 class="text-xl font-bold mb-4 flex items-center gap-2">
+                    <span>🎯</span>
+                    <span>游戏预览</span>
+                </h2>
+                
+                <!-- 游戏区域 -->
+                <div id="game-screen" class="flex-1 glass rounded-2xl relative overflow-hidden">
+                    <div id="game-area" class="absolute inset-4 bg-black/30 rounded-xl">
+                        <!-- 词汇将在此动态生成 -->
+                    </div>
+                    
+                    <!-- 等待画面 -->
+                    <div id="waiting-screen" class="absolute inset-0 flex items-center justify-center">
+                        <div class="text-center">
+                            <p class="text-4xl mb-4">🎯</p>
+                            <p class="text-xl text-gray-400">等待开始游戏...</p>
+                            <p class="text-sm text-gray-500 mt-2">目标词汇和干扰词汇颜色完全一致</p>
+                        </div>
+                    </div>
+                    
+                    <!-- 结束画面 -->
+                    <div id="end-screen" class="absolute inset-0 hidden items-center justify-center bg-black/80">
+                        <div class="text-center">
+                            <p class="text-4xl mb-4">🏆</p>
+                            <p class="text-2xl font-bold mb-4">游戏结束！</p>
+                            <div id="final-scores"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 分数板 -->
+                <div id="scoreboard" class="mt-4 glass rounded-xl p-4 hidden">
+                    <h3 class="font-bold mb-3">实时分数</h3>
+                    <div id="scores" class="space-y-2"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============ 音效系统 ============
+        const SoundManager = {
+            enabled: true,
+            audioCtx: null,
+            
+            init() {
+                try {
+                    this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                } catch (e) {}
+                this.enabled = localStorage.getItem('hostSoundEnabled') !== 'false';
+                updateSoundButton();
+            },
+            
+            playSuccess() {
+                if (!this.enabled || !this.audioCtx) return;
+                this.resume();
+                const ctx = this.audioCtx;
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.frequency.setValueAtTime(523, ctx.currentTime);
+                osc.frequency.setValueAtTime(659, ctx.currentTime + 0.1);
+                osc.frequency.setValueAtTime(784, ctx.currentTime + 0.2);
+                gain.gain.setValueAtTime(0.15, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+                osc.start(ctx.currentTime);
+                osc.stop(ctx.currentTime + 0.4);
+            },
+            
+            playError() {
+                if (!this.enabled || !this.audioCtx) return;
+                this.resume();
+                const ctx = this.audioCtx;
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(200, ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(100, ctx.currentTime + 0.2);
+                gain.gain.setValueAtTime(0.1, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+                osc.start(ctx.currentTime);
+                osc.stop(ctx.currentTime + 0.2);
+            },
+            
+            resume() {
+                if (this.audioCtx && this.audioCtx.state === 'suspended') {
+                    this.audioCtx.resume();
+                }
+            },
+            
+            toggle() {
+                this.enabled = !this.enabled;
+                localStorage.setItem('hostSoundEnabled', this.enabled);
+                updateSoundButton();
+            }
+        };
+        
+        function updateSoundButton() {
+            const btn = document.getElementById('sound-toggle');
+            if (btn) btn.textContent = SoundManager.enabled ? '🔊' : '🔇';
+        }
+
+        // ============ 全局状态 ============
+        let socket = null;
+        let roomId = null;
+        let playerId = null;
+        let isPlaying = false;
+        let activeWords = [];
+        let animationFrameId = null;
+        let gameStartTime = 0;
+        let currentSpeed = 60;
+        let playerStats = {};  // { playerId: { name, score, hits, misses } }
+
+        // ============ DOM 元素 ============
+        const createBtn = document.getElementById('create-btn');
+        const targetInput = document.getElementById('target-input');
+        const distractorInput = document.getElementById('distractor-input');
+        const speedSelect = document.getElementById('speed-select');
+        const durationSelect = document.getElementById('duration-select');
+        const targetCount = document.getElementById('target-count');
+        const distractorCount = document.getElementById('distractor-count');
+        const roomForm = document.getElementById('room-form');
+        const roomInfo = document.getElementById('room-info');
+        const roomCode = document.getElementById('room-code');
+        const roomLink = document.getElementById('room-link');
+        const copyLinkBtn = document.getElementById('copy-link-btn');
+        const playerList = document.getElementById('player-list');
+        const controlSection = document.getElementById('control-section');
+        const startBtn = document.getElementById('start-btn');
+        const pauseBtn = document.getElementById('pause-btn');
+        const resumeBtn = document.getElementById('resume-btn');
+        const endBtn = document.getElementById('end-btn');
+        const addWordsInput = document.getElementById('add-words-input');
+        const addWordsBtn = document.getElementById('add-words-btn');
+        const gameArea = document.getElementById('game-area');
+        const waitingScreen = document.getElementById('waiting-screen');
+        const endScreen = document.getElementById('end-screen');
+        const finalScores = document.getElementById('final-scores');
+        const scoreboard = document.getElementById('scoreboard');
+        const scoresDiv = document.getElementById('scores');
+        const statusIndicator = document.getElementById('status-indicator');
+        const statusText = document.getElementById('status-text');
+
+        // ============ 词汇统计更新 ============
+        function updateWordStats() {
+            const targets = targetInput.value.split('\n').filter(v => v.trim()).length;
+            const distractors = distractorInput.value.split('\n').filter(v => v.trim()).length;
+            targetCount.textContent = targets + ' 个';
+            distractorCount.textContent = distractors + ' 个';
+        }
+
+        targetInput.addEventListener('input', updateWordStats);
+        distractorInput.addEventListener('input', updateWordStats);
+
+        // ============ 连接状态更新 ============
+        function updateConnectionStatus(connected) {
+            if (connected) {
+                statusIndicator.className = 'inline-block w-2 h-2 rounded-full mr-2 bg-green-500';
+                statusText.textContent = '已连接';
+            } else {
+                statusIndicator.className = 'inline-block w-2 h-2 rounded-full mr-2 bg-red-500';
+                statusText.textContent = '未连接';
+            }
+        }
+
+        // ============ Socket.IO 连接 ============
+        function initSocket() {
+            socket = io();
+
+            socket.on('connect', () => {
+                console.log('已连接到服务器');
+                updateConnectionStatus(true);
+            });
+
+            socket.on('disconnect', () => {
+                console.log('断开连接');
+                updateConnectionStatus(false);
+            });
+
+            socket.on('connect_error', (err) => {
+                console.error('连接错误:', err);
+                updateConnectionStatus(false);
+            });
+
+            // 监听玩家加入
+            socket.on('player_joined', (data) => {
+                console.log('玩家加入:', data);
+                updatePlayerList(data.players || {});
+            });
+
+            // 监听玩家离开
+            socket.on('player_left', (data) => {
+                console.log('玩家离开:', data);
+                updatePlayerList(data.players || {});
+            });
+
+            // 监听游戏开始
+            socket.on('game_start', (data) => {
+                console.log('游戏开始:', data);
+                startGameRender(data);
+            });
+
+            // 监听词汇生成
+            socket.on('word_spawn', (word) => {
+                spawnWord(word);
+            });
+
+            // 监听分数更新
+            socket.on('score_update', (data) => {
+                updateScore(data);
+            });
+
+            // 监听游戏暂停
+            socket.on('game_paused', () => {
+                isPlaying = false;
+                updateControlButtons();
+            });
+
+            // 监听游戏继续
+            socket.on('game_resumed', () => {
+                isPlaying = true;
+                updateControlButtons();
+                requestAnimationFrame(gameLoop);
+            });
+
+            // 监听游戏结束
+            socket.on('game_end', (data) => {
+                console.log('游戏结束:', data);
+                showEndScreen(data);
+            });
+
+            // 监听游戏结束（备用）
+            socket.on('game_ended', (data) => {
+                console.log('游戏已结束:', data);
+                showEndScreen(data);
+            });
+
+            // 监听词汇添加
+            socket.on('words_added', (data) => {
+                console.log('收到新词汇:', data.words);
+            });
+        }
+
+        // ============ 创建房间 ============
+        createBtn.addEventListener('click', async () => {
+            const targetWords = targetInput.value.trim();
+            const distractorWords = distractorInput.value.trim();
+
+            if (!targetWords) {
+                alert('请输入目标词汇');
+                return;
+            }
+
+            const targetList = targetWords.split('\n').filter(v => v.trim());
+            const distractorList = distractorWords.split('\n').filter(v => v.trim());
+
+            if (targetList.length < 1) {
+                alert('至少需要1个目标词汇');
+                return;
+            }
+
+            if (distractorList.length < 1) {
+                alert('至少需要1个干扰词汇');
+                return;
+            }
+
+            createBtn.disabled = true;
+            createBtn.textContent = '创建中...';
+
+            try {
+                // 通过 Socket.IO 创建房间
+                const result = await new Promise((resolve, reject) => {
+                    socket.emit('create_room', {
+                        target_words: targetWords,
+                        distractor_words: distractorWords,
+                        fall_speed: parseInt(speedSelect.value),
+                        game_duration: parseInt(durationSelect.value)
+                    }, (response) => {
+                        if (response.success) resolve(response);
+                        else reject(new Error(response.error || '创建失败'));
+                    });
+                    // 超时保护
+                    setTimeout(() => reject(new Error('连接超时')), 5000);
+                });
+
+                roomId = result.room_id;
+                playerId = result.player_id;
+                currentSpeed = parseInt(speedSelect.value);
+
+                // 更新UI
+                roomForm.classList.add('hidden');
+                roomInfo.classList.remove('hidden');
+                roomCode.textContent = roomId;
+                const link = `${window.location.origin}/player?room=${roomId}`;
+                roomLink.textContent = link;
+                roomLink.href = link;
+                
+                controlSection.classList.remove('hidden');
+                waitingScreen.querySelector('p').textContent = '等待学生加入...';
+                
+            } catch (err) {
+                console.error('创建房间失败:', err);
+                alert('创建失败: ' + err.message);
+            } finally {
+                createBtn.disabled = false;
+                createBtn.textContent = '🎮 创建房间';
+            }
+        });
+
+        // 复制链接按钮
+        copyLinkBtn.addEventListener('click', () => {
+            const link = roomLink.textContent || roomLink.href;
+            navigator.clipboard.writeText(link).then(() => {
+                copyLinkBtn.textContent = '✅ 已复制';
+                setTimeout(() => {
+                    copyLinkBtn.textContent = '📋 复制链接';
+                }, 2000);
+            });
+        });
+
+        // ============ 游戏控制 ============
+        startBtn.addEventListener('click', () => {
+            if (!socket || !roomId) return;
+            socket.emit('start_game', {});
+            isPlaying = true;
+            updateControlButtons();
+        });
+
+        pauseBtn.addEventListener('click', () => {
+            if (!socket || !roomId) return;
+            socket.emit('pause_game', {});
+            isPlaying = false;
+            updateControlButtons();
+        });
+
+        resumeBtn.addEventListener('click', () => {
+            if (!socket || !roomId) return;
+            socket.emit('resume_game', {});
+            isPlaying = true;
+            updateControlButtons();
+        });
+
+        endBtn.addEventListener('click', () => {
+            if (!socket || !roomId) return;
+            socket.emit('end_game', {});
+            isPlaying = false;
+            updateControlButtons();
+        });
+
+        addWordsBtn.addEventListener('click', () => {
+            const words = addWordsInput.value.trim();
+            if (words && socket) {
+                socket.emit('add_words', { words });
+                addWordsInput.value = '';
+            }
+        });
+
+        addWordsInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') addWordsBtn.click();
+        });
+
+        // ============ UI 更新函数 ============
+        function updatePlayerList(players) {
+            if (!players || Object.keys(players).length === 0) {
+                playerList.innerHTML = '<p class="text-sm text-gray-500">等待学生加入...</p>';
+            } else {
+                playerList.innerHTML = Object.entries(players).map(([id, name]) => `
+                    <div class="flex items-center gap-2 bg-white/10 rounded-lg p-2">
+                        <span class="text-lg">👤</span>
+                        <span class="font-bold">${name}</span>
+                    </div>
+                `).join('');
+            }
+        }
+
+        function updateControlButtons() {
+            if (isPlaying) {
+                startBtn.classList.add('hidden');
+                pauseBtn.classList.remove('hidden');
+                resumeBtn.classList.add('hidden');
+                endBtn.classList.remove('hidden');
+            } else {
+                startBtn.classList.remove('hidden');
+                pauseBtn.classList.add('hidden');
+                resumeBtn.classList.add('hidden');
+                endBtn.classList.remove('hidden');
+            }
+        }
+
+        function startGameRender(data) {
+            waitingScreen.classList.add('hidden');
+            endScreen.classList.add('hidden');
+            endScreen.classList.remove('flex');
+            scoreboard.classList.remove('hidden');
+            isPlaying = true;
+            activeWords = [];
+            gameStartTime = performance.now();
+            currentSpeed = data.fall_speed || 60;
+            playerStats = {};
+            updateScoresDisplay();
+            
+            requestAnimationFrame(gameLoop);
+        }
+
+        function gameLoop(timestamp) {
+            if (!isPlaying) return;
+
+            const gameAreaRect = gameArea.getBoundingClientRect();
+            const height = gameAreaRect.height;
+
+            // 更新分数显示
+            updateScoresDisplay();
+
+            if (isPlaying) {
+                animationFrameId = requestAnimationFrame(gameLoop);
+            }
+        }
+
+        function spawnWord(word) {
+            const gameAreaRect = gameArea.getBoundingClientRect();
+            const maxX = gameAreaRect.width - 150;
+            
+            word.x = Math.random() * maxX + 20;
+            word.y = -50;
+            activeWords.push(word);
+            
+            // 创建 DOM 元素
+            const bubble = document.createElement('div');
+            bubble.className = 'word-bubble';
+            bubble.dataset.wordId = word.id;
+            bubble.textContent = word.text;
+            bubble.style.left = word.x + 'px';
+            bubble.style.top = word.y + 'px';
+            bubble.style.padding = '10px 20px';
+            bubble.style.borderRadius = '25px';
+            bubble.style.fontWeight = 'bold';
+            bubble.style.position = 'absolute';
+            bubble.style.cursor = 'pointer';
+            bubble.style.transition = 'transform 0.1s';
+            bubble.style.whiteSpace = 'nowrap';
+            bubble.style.color = 'white';
+            
+            bubble.addEventListener('mouseenter', () => {
+                bubble.style.transform = 'scale(1.1)';
+            });
+            bubble.addEventListener('mouseleave', () => {
+                bubble.style.transform = 'scale(1)';
+            });
+            
+            gameArea.appendChild(bubble);
+            word.el = bubble;
+            
+            // 启动下落动画
+            animateWord(word, bubble);
+        }
+
+        function animateWord(word, bubble) {
+            if (!isPlaying || !word.el) return;
+            
+            const gameAreaRect = gameArea.getBoundingClientRect();
+            const height = gameAreaRect.height;
+            const speed = currentSpeed || 60;
+            
+            function step() {
+                if (!word.el || !isPlaying) return;
+                
+                word.y += speed / 60;
+                bubble.style.top = word.y + 'px';
+                
+                if (word.y < height + 50) {
+                    requestAnimationFrame(step);
+                } else {
+                    bubble.remove();
+                    word.el = null;
+                }
+            }
+            
+            requestAnimationFrame(step);
+        }
+
+        function updateScore(data) {
+            showScorePop(data.change, data.is_target);
+            
+            // 更新玩家统计数据
+            const pid = data.player_id;
+            if (!playerStats[pid]) {
+                playerStats[pid] = { name: data.player_name || '玩家', score: 0, hits: 0, misses: 0 };
+            }
+            playerStats[pid].score = data.score;
+            if (data.is_target) {
+                playerStats[pid].hits = (playerStats[pid].hits || 0) + 1;
+            } else {
+                playerStats[pid].misses = (playerStats[pid].misses || 0) + 1;
+            }
+            
+            updateScoresDisplay();
+        }
+
+        function showScorePop(change, isTarget) {
+            const pop = document.createElement('div');
+            pop.className = 'score-pop';
+            pop.style.position = 'absolute';
+            pop.style.left = '50%';
+            pop.style.top = '40%';
+            pop.style.transform = 'translateX(-50%)';
+            pop.style.fontWeight = 'bold';
+            pop.style.fontSize = '32px';
+            pop.style.pointerEvents = 'none';
+            pop.style.animation = 'popUp 0.8s ease-out forwards';
+            pop.style.color = isTarget ? '#4ade80' : '#f87171';
+            pop.textContent = change > 0 ? `+${change}` : change;
+            
+            gameArea.appendChild(pop);
+            
+            setTimeout(() => pop.remove(), 800);
+        }
+
+        function updateScoresDisplay() {
+            const stats = Object.entries(playerStats);
+            if (stats.length === 0) {
+                scoresDiv.innerHTML = '<p class="text-sm text-gray-500">暂无分数</p>';
+                return;
+            }
+            
+            // 按分数降序排列
+            stats.sort((a, b) => b[1].score - a[1].score);
+            
+            scoresDiv.innerHTML = stats.map(([pid, s]) => {
+                const total = (s.hits || 0) + (s.misses || 0);
+                const accuracy = total > 0 ? Math.round((s.hits || 0) / total * 100) : 0;
+                return `
+                    <div class="flex items-center justify-between bg-white/10 rounded-lg p-3">
+                        <div class="flex items-center gap-2">
+                            <span class="text-lg">👤</span>
+                            <span class="font-bold">${s.name}</span>
+                        </div>
+                        <div class="flex items-center gap-4">
+                            <span class="text-green-400 font-bold text-lg">${s.score} 分</span>
+                            <span class="text-xs text-gray-400">命中 ${s.hits || 0} / 失误 ${s.misses || 0}</span>
+                            <span class="text-xs text-blue-300">${accuracy}%</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function showEndScreen(data) {
+            isPlaying = false;
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+            }
+            
+            // 清除所有词汇
+            activeWords.forEach(word => {
+                if (word.el) word.el.remove();
+            });
+            activeWords = [];
+            
+            endScreen.classList.remove('hidden');
+            endScreen.classList.add('flex');
+            
+            let html = '<div class="space-y-2">';
+            if (data && data.scores) {
+                for (const [pid, score] of Object.entries(data.scores)) {
+                    const hits = data.hits?.[pid] || 0;
+                    const misses = data.misses?.[pid] || 0;
+                    const total = hits + misses;
+                    const accuracy = total > 0 ? Math.round(hits / total * 100) : 0;
+                    html += `
+                        <div class="bg-white/10 rounded-lg p-3">
+                            <p class="font-bold">玩家</p>
+                            <p class="text-2xl">${score} 分</p>
+                            <p class="text-xs text-gray-400">命中 ${hits} / 失误 ${misses} / 准确率 ${accuracy}%</p>
+                        </div>
+                    `;
+                }
+            }
+            html += '</div>';
+            finalScores.innerHTML = html;
+            
+            waitingScreen.querySelector('p').textContent = '游戏已结束';
+            waitingScreen.classList.remove('hidden');
+        }
+
+        // ============ 初始化 ============
+        initSocket();
+        updateWordStats();
+        SoundManager.init();
+        
+        // 音效开关
+        document.getElementById('sound-toggle').addEventListener('click', () => SoundManager.toggle());
+    </script>
+
+    <style>
+        .word-bubble {
+            color: white;
+        }
+        @keyframes popUp {
+            0% { transform: translateY(0) scale(1); opacity: 1; }
+            100% { transform: translateY(-50px) scale(1.5); opacity: 0; }
+        }
+    </style>
+</body>
+</html>
